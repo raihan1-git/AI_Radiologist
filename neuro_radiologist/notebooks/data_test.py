@@ -21,8 +21,8 @@ data[mask] = 255.0 # Give the "brain" some intensity
 affine = np.eye(4)
 
 # 3. Save as a NIfTI file
-os.makedirs('ai-neuro-radiologist/data/raw', exist_ok=True)
-file_path = 'ai-neuro-radiologist/data/raw/dummy_mri.nii.gz'
+os.makedirs('neuro_radiologist/data/raw', exist_ok=True)
+file_path = 'neuro_radiologist/data/raw/dummy_mri.nii.gz'
 nifti_img = nib.Nifti1Image(data, affine)
 nib.save(nifti_img, file_path)
 print(f"Saved dummy NIfTI to: {file_path}")
@@ -75,10 +75,10 @@ print(f"Final Tensor Shape: {final_tensor.shape}")
 print(f"Intensity Min/Max: {final_tensor.min():.2f} / {final_tensor.max():.2f}")
 
 
-from src.data_pipeline import get_mri_dataloader
+from neuro_radiologist.src.data_pipeline import get_mri_dataloader
 
 # Simulate having 4 patient scans by repeating the dummy file
-file_paths = ['data/raw/dummy_mri.nii.gz'] * 4 
+file_paths = ['neuro_radiologist/data/raw/dummy_mri.nii.gz'] * 4 
 
 # Get the dataloader (batch size 2)
 dataloader = get_mri_dataloader(file_paths, batch_size=2, num_workers=0)
