@@ -104,14 +104,18 @@ class TransformerBlock(nn.Module):
             nn.Dropout(dropout)
         )
 
-    def forward(self, x):
-        # 1. Self-Attention (Residual connection)
-        # x acts as Query, Key, and Value
-        attn_out, _ = self.attn(self.norm1(x), self.norm1(x), self.norm1(x))
+    def forward(self, x, return_attention=False):
+        # We explicitly request the attention weights if the flag is True
+        attn_out, attn_weights = self.attn(
+            self.norm1(x), self.norm1(x), self.norm1(x), 
+            need_weights=return_attention, 
+            average_attn_weights=False # Keep heads separate for now
+        )
         x = x + attn_out
-        
-        # 2. MLP (Residual connection)
         x = x + self.mlp(self.norm2(x))
+        
+        if return_attention:
+            return x, attn_weights
         return x
 
 # --- UPDATE YOUR ViT3D CLASS ---
