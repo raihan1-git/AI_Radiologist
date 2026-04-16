@@ -1,76 +1,73 @@
+import os
 import torch
-import torch.nn.functional as F
+import numpy as np
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Load the API key from the .env file
+load_dotenv()
+api_key = os.getenv("GEMINI_API_KEY")
+
+if api_key:
+    genai.configure(api_key=api_key)
+else:
+    print("WARNING: GEMINI_API_KEY not found in .env file.")
+
+print(api_key)  # Debugging line to confirm the API key is loaded
 
 class MedicalReportGenerator:
-    """
-    Translates 3D ViT outputs into dual-tier medical reports using an LLM.
-    """
-    def __init__(self, api_key=None, model_name="gpt-4"): # Placeholder for actual API setup
-        self.api_key = api_key
-        self.model_name = model_name
-        # In a real scenario, you would initialize your OpenAI/Gemini client here
+    def __init__(self):
+        # We use gemini-1.5-flash for rapid, highly capable text generation
+        self.model = genai.GenerativeModel('gemini-2.5-flash')
 
-    def _process_model_outputs(self, logits, heatmap):
-        """Converts raw tensors into readable metrics for the LLM."""
-        # 1. Calculate Confidence via Softmax
-        probabilities = F.softmax(logits, dim=-1)
-        confidence = torch.max(probabilities).item() * 100
+    def generate_reports(self, logits, heatmap_3d):
+        """
+        Takes the PyTorch outputs, formats the context, and queries the LLM
+        for both the Clinician and Patient reports.
+        """
+        # 1. Extract Clinical Metrics from Tensors
+        probabilities = torch.softmax(logits, dim=-1)[0]
+        confidence_score = probabilities.max().item() * 100
         predicted_class = torch.argmax(probabilities).item()
+        diagnosis = "Anomaly Detected" if predicted_class == 1 else "No Anomaly Detected"
         
-        diagnosis = "Anomaly Detected (Potential Lesion/Tumor)" if predicted_class == 1 else "No Anomalies Detected (Healthy)"
+        # 2. Extract Spatial Coordinates from Heatmap
+        # Find the highest attention concentration in the 4x4x4 grid
+        max_idx = np.unravel_index(np.argmax(heatmap_3d, axis=None), heatmap_3d.shape)
         
-        # 2. Extract highest attention region (simplistic approach for the prompt)
-        # We find the flattened index of the maximum attention weight
-        flat_index = torch.argmax(heatmap.view(-1)).item()
-        
-        return diagnosis, confidence, flat_index
+        # 3. Draft the Base Payload
+        clinical_context = f"""
+        System Outputs:
+        - Primary Finding: {diagnosis}
+        - AI Confidence Score: {confidence_score:.2f}%
+        - Primary Attention Focus (Z, Y, X coordinate block): {max_idx}
+        """
 
-    def generate_prompts(self, logits, heatmap):
-        diagnosis, confidence, focus_idx = self._process_model_outputs(logits, heatmap)
-        
-        # --- Prompt 1: The Clinician Report ---
+        # 4. Generate Clinician Report
         clinician_prompt = f"""
-        Act as an expert Neuro-Radiologist. You are reviewing the outputs of an AI 3D Vision Transformer diagnostic system.
+        Act as an expert Neuro-Radiologist. Review the following AI system outputs for an MRI scan:
+        {clinical_context}
         
-        System Outputs:
-        - Primary Finding: {diagnosis}
-        - AI Confidence Score: {confidence:.1f}%
-        - Primary Attention Focus Index (Patch/Region): {focus_idx} (out of 64 total volumetric regions)
-        
-        Draft a brief, highly technical radiology report containing exactly two sections:
-        1. FINDINGS: (Describe the AI's technical output)
-        2. IMPRESSION: (Provide a clear, clinical summary)
+        Draft a brief, highly technical diagnostic report (max 3 sentences) structured as:
+        1. FINDINGS: (Describe what the AI's coordinates and confidence suggest).
+        2. IMPRESSION: (Provide the clinical conclusion).
         """
         
-        # --- Prompt 2: The Patient Report ---
+        # 5. Generate Patient Report
         patient_prompt = f"""
-        Act as an empathetic, clear-spoken doctor explaining an AI scan result to a patient. 
+        Act as an empathetic, clear-communicating doctor. Review the following AI system outputs:
+        {clinical_context}
         
-        System Outputs:
-        - Primary Finding: {diagnosis}
-        - AI Confidence Score: {confidence:.1f}%
-        
-        Draft a short, reassuring explanation of these results. Do NOT use dense medical jargon. 
-        Focus on clarity, compassion, and explaining what a {confidence:.1f}% AI confidence means in simple terms.
-        Always advise them that an AI is a tool, and their human doctor will make the final decision.
+        Draft a short, reassuring explanation (max 3 sentences) for the patient. 
+        Avoid dense medical jargon. Explain what the AI looked at and what the general outcome means. 
+        Remind them this is an AI tool and a human doctor will make the final call.
         """
-        
-        return clinician_prompt, patient_prompt
 
-    def mock_generate_reports(self, logits, heatmap):
-        """
-        A mock function to test the pipeline before spending money on API calls.
-        """
-        clinician_prompt, patient_prompt = self.generate_prompts(logits, heatmap)
-        
-        # In production, you pass these prompts to your LLM API.
-        # Here, we just print the prompts to ensure the architecture is sound.
-        print("\n" + "="*50)
-        print("CLINICIAN API PROMPT PAYLOAD:")
-        print("="*50)
-        print(clinician_prompt)
-        
-        print("\n" + "="*50)
-        print("PATIENT API PROMPT PAYLOAD:")
-        print("="*50)
-        print(patient_prompt)
+        # 6. Execute the API Calls
+        try:
+            clinician_response = self.model.generate_content(clinician_prompt)
+            patient_response = self.model.generate_content(patient_prompt)
+            
+            return clinician_response.text, patient_response.text
+        except Exception as e:
+            return f"API Error: {str(e)}", f"API Error: {str(e)}"

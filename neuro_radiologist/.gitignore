@@ -1,5 +1,5 @@
-data/
+.env
 __pycache__/
 *.pyc
-.DS_Store
-.env
+weights/
+temp_uploaded_mri.nii.gz

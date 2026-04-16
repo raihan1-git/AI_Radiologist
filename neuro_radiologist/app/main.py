@@ -8,7 +8,7 @@ import os
 
 
 import torch
-from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, Orientationd, Spacingd, ScaleIntensityd
+from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, Orientationd, Spacingd, ScaleIntensityd, CenterSpatialCropd
 from neuro_radiologist.src.models.mae_3d import MaskedAutoencoder3D
 from neuro_radiologist.src.models.classifier_3d import NeuroRadiologistClassifier
 from neuro_radiologist.src.utils import generate_3d_attention_map
@@ -67,11 +67,16 @@ def render_slice(volume, heatmap, z_index, alpha):
 # --- NEW: Cache the PyTorch Model ---
 @st.cache_resource
 def load_ai_model():
-    # In production: model.load_state_dict(torch.load('weights.pth'))
-    # Here, we initialize randomly to test the architecture
-    mae = MaskedAutoencoder3D()
+    # 1. Initialize the MAE with 4 channels to match the BraTS data
+    mae = MaskedAutoencoder3D(image_size=64, patch_size=16, in_channels=4, embed_dim=768)
     model = NeuroRadiologistClassifier(mae, num_classes=2)
-    model.eval() # Set to evaluation mode
+    
+    # 2. Load the trained weights! 
+    # (map_location='cpu' is important since your local machine might not have a massive GPU)
+    weight_path = "neuro_radiologist/weights/diagnostic_classifier_final.pth" # Update this path if needed
+    model.load_state_dict(torch.load(weight_path, map_location=torch.device('cpu')))
+    
+    model.eval() # Lock it for inference
     return model
 
 ai_model = load_ai_model()
@@ -84,7 +89,8 @@ inference_transforms = Compose([
     Orientationd(keys=["image"], axcodes="RAS"),
     # We resize exactly to 64x64x64 for our ViT
     Spacingd(keys=["image"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear")),
-    ScaleIntensityd(keys=["image"])
+    ScaleIntensityd(keys=["image"]),
+    CenterSpatialCropd(keys=["image"], roi_size=(64, 64, 64))
 ])
 
 # 4. Main Content Columns
@@ -103,15 +109,13 @@ with col1:
     if uploaded_file is None or tmp_path is None:
         st.info("👈 Please upload a NIfTI file from the sidebar to begin.")
     else:
-        # Load the MRI volume directly from our saved file
-        img = nib.load(tmp_path)
-        volume = img.get_fdata()
+        # Pass the uploaded file through our MONAI pipeline to crop it perfectly
+        data_dict = {"image": tmp_path}
+        processed_data = inference_transforms(data_dict)
         
-        # UI mock shape handling
-        if volume.shape != (64, 64, 64):
-            volume = np.zeros((64, 64, 64))
-            volume[16:48, 16:48, 16:48] = 255
-            st.warning("Note: Uploaded file reshaped for 64^3 UI testing.")
+        # processed_data["image"] shape is [4, 64, 64, 64]. 
+        # We extract Channel 0 (FLAIR modality) to display on the screen!
+        volume = processed_data["image"][0].numpy()
 
         # Fetch the REAL Heatmap from Session State
         if 'generated_heatmap' in st.session_state:
@@ -152,17 +156,18 @@ with col2:
                 # Store in Streamlit session state so col1 can use it for rendering!
                 st.session_state['generated_heatmap'] = heatmap_3d.numpy()[0] 
                 
-                # 4. Generate LLM Prompts
-                clinician_prompt, patient_prompt = llm_agent.generate_prompts(logits, heatmap_3d)
+                # 4. Generate ACTUAL LLM Reports (Updates here!)
+                clinician_report, patient_report = llm_agent.generate_reports(logits, low_res_heatmap)
                 
-                # 5. Display the mock results
-                st.success("Inference Complete.")
+                # 5. Display the real results
+                st.success("Analysis and Report Generation Complete.")
                 
-                with st.expander("🩺 Clinician Output (API Payload)", expanded=True):
-                    st.code(clinician_prompt, language="text")
-                    
-                with st.expander("🫂 Patient Output (API Payload)", expanded=False):
-                    st.code(patient_prompt, language="text")
+                # We use st.info and st.success blocks instead of st.code to read it naturally
+                st.markdown("### 🩺 Clinician Report")
+                st.info(clinician_report)
+                
+                st.markdown("### 🫂 Patient Summary")
+                st.success(patient_report)
                     
         elif 'generated_heatmap' in st.session_state:
             st.success("Analysis complete. Check col1 for attention map.")
