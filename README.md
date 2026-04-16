@@ -49,5 +49,5 @@ If you wish to run the inference engine locally or train the MAE from scratch:
 
 1. **Clone the repository:**
    ```bash
-   git clone [https://github.com/YOUR_USERNAME/AI_Radiologist.git](https://github.com/YOUR_USERNAME/AI_Radiologist.git)
+   git clone [https://github.com/raihan1-git/AI_Radiologist.git](https://github.com/raihan1-git/AI_Radiologist.git)
    cd AI_Radiologist/neuro_radiologist
