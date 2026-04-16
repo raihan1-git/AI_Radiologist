@@ -8,3 +8,5 @@ scipy
 matplotlib
 streamlit
 tqdm
+google-generativeai
+python-dotenv
